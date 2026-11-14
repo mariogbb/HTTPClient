@@ -18,11 +18,14 @@ import (
 type HTTPMethod string
 
 const (
-	GET    HTTPMethod = "GET"
-	POST   HTTPMethod = "POST"
-	PUT    HTTPMethod = "PUT"
-	PATCH  HTTPMethod = "PATCH"
-	DELETE HTTPMethod = "DELETE"
+	GET     HTTPMethod = "GET"
+	HEAD    HTTPMethod = "HEAD"
+	POST    HTTPMethod = "POST"
+	PUT     HTTPMethod = "PUT"
+	DELETE  HTTPMethod = "DELETE"
+	CONNECT HTTPMethod = "CONNECT"
+	OPTIONS HTTPMethod = "OPTIONS"
+	PATCH   HTTPMethod = "PATCH" // Introduced in RFC 5789
 )
 
 type ArgInfo struct {
