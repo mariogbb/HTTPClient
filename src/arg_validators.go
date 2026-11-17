@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -26,10 +27,10 @@ func ValidateHTTPMethod(method string) (HTTPMethod, error) {
 
 // Validates an HTTP/HTTPS URI or an authority with an optional path and query.
 // By default schema is set as HTTP
-func ValidateHTTPHostAndPort(input string) (string, string, int, error) {
+func ValidateHTTPHostAndPort(input string) (string, string, int, bool, error) {
 
-	invalid := func() (string, string, int, error) {
-		return "", "", 0, fmt.Errorf("invalid HTTP URI %q", input)
+	invalid := func() (string, string, int, bool, error) {
+		return "", "", 0, false, fmt.Errorf("invalid HTTP URI %q", input)
 	}
 
 	// URI characters and percent escapes
@@ -45,7 +46,8 @@ func ValidateHTTPHostAndPort(input string) (string, string, int, error) {
 		input = "http://" + input
 	}
 
-	// @TODO: Implement a custom validator for URL
+	// @TODO: Implement a custom validator for URL. For now it works as a way
+	// to extract URL data
 	u, err := url.Parse(input)
 
 	if err != nil || u.Hostname() == "" {
@@ -56,6 +58,7 @@ func ValidateHTTPHostAndPort(input string) (string, string, int, error) {
 		return invalid()
 	}
 
+	isPortUserProvided := false
 	scheme := strings.ToLower(u.Scheme)
 	port := 80
 
@@ -69,9 +72,11 @@ func ValidateHTTPHostAndPort(input string) (string, string, int, error) {
 		if err != nil || port < 1 || port > 65535 {
 			return invalid()
 		}
+
+		isPortUserProvided = true
 	}
 
-	return scheme, u.Hostname(), port, nil
+	return scheme, u.Hostname(), port, isPortUserProvided, nil
 }
 
 /* Validates HTTP request headers provided by the user input. Headers must follow
@@ -81,12 +86,25 @@ func ValidateHTTPHostAndPort(input string) (string, string, int, error) {
 func ValidateHeaders(headers []string) error {
 
 	// HTTP field names are tokens; values must not contain control characters.
-	pattern := regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+: [^\\x00-\\x08\\x0a-\\x1f\\x7f]+$")
+	pattern := regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+:[^\\x00-\\x08\\x0a-\\x1f\\x7f]*$")
 
 	for _, header := range headers {
 
 		if !pattern.MatchString(header) {
-			return fmt.Errorf("invalid header %q: expected <name>: <value>", header)
+			return fmt.Errorf("invalid header %q: expected <name>:<value> (space and value are optional)", header)
+		}
+
+		var sepIndex = strings.IndexByte(header, ':')
+
+		var name = header[:sepIndex]
+		var lowerName = strings.ToLower(name)
+
+		if lowerName == "host" {
+			return fmt.Errorf("invalid header %q: Host cannot be provided as a header and must be supplied as the last arg of the command", header)
+		}
+
+		if slices.Contains(FORBIDDEN_USER_SUPPLIED_HEADERS, lowerName) {
+			return fmt.Errorf("invalid header %q: Forbidden header", header)
 		}
 
 	}

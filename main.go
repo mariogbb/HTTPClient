@@ -16,12 +16,13 @@ import (
 )
 
 type ArgInfo struct {
-	port    int
-	timeout int
-	host    string
-	schema  string
-	method  src.HTTPMethod
-	headers []string
+	port               int
+	isPortUserProvided bool
+	timeout            int
+	host               string
+	schema             string
+	method             src.HTTPMethod
+	headers            []string
 }
 
 type headerFlags []string
@@ -54,7 +55,7 @@ func parseArgs() ArgInfo {
 
 	// Remove the http / https protocol in case the user introduces it
 	// and flag if the request is http or https
-	schema, host, port, err := src.ValidateHTTPHostAndPort(flag.Arg(0))
+	schema, host, port, isPortUserProvided, err := src.ValidateHTTPHostAndPort(flag.Arg(0))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -77,15 +78,10 @@ func parseArgs() ArgInfo {
 		log.Fatal(err)
 	}
 
-	return ArgInfo{port: port, timeout: *timeout, host: host, method: httpMethod, schema: schema, headers: []string(headers)}
+	return ArgInfo{port: port, timeout: *timeout, host: host, method: httpMethod, schema: schema, headers: []string(headers), isPortUserProvided: isPortUserProvided}
 }
 
-func main() {
-
-	// CMD argument flags
-
-	var args = parseArgs()
-
+func stablishTCPConnection(args ArgInfo) (*tls.Conn, *bufio.Writer, *bufio.Reader) {
 	// Start TCP connection (TLS handshake is already included with tls.Dial)
 	var tcpConnectionString string = net.JoinHostPort(args.host, strconv.Itoa(args.port))
 
@@ -95,24 +91,29 @@ func main() {
 	conn, err := tls.Dial("tcp", tcpConnectionString, nil)
 
 	if err != nil {
-		fmt.Println("Connection error:", err)
-		return
+		log.Fatalln("Connection error:", err)
 	}
-
-	defer conn.Close()
 
 	// Avoid waiting indefinitely for the server.
 	if err := conn.SetDeadline(time.Now().Add(time.Duration(args.timeout) * time.Millisecond)); err != nil {
-		fmt.Println("Deadline error:", err)
-		return
+		log.Fatalln("Deadline error:", err)
 	}
 
 	writer := bufio.NewWriter(conn)
 	reader := bufio.NewReader(conn)
 
+	return conn, writer, reader
+}
+
+func sendHTTPRequest(args ArgInfo, writer *bufio.Writer) {
 	var httpReqMessage = fmt.Sprintf("%s / HTTP/1.1\r\n", args.method)
 
-	httpReqMessage += fmt.Sprintf("Host: %s\r\n", args.host)
+	// Keep URL authority in case user provides or doesn't provide a port
+	if args.isPortUserProvided {
+		httpReqMessage += fmt.Sprintf("Host: %s:%d\r\n", args.host, args.port)
+	} else {
+		httpReqMessage += fmt.Sprintf("Host: %s\r\n", args.host)
+	}
 
 	for _, header := range args.headers {
 
@@ -124,21 +125,25 @@ func main() {
 
 	fmt.Println(httpReqMessage)
 
-	_, err = writer.WriteString(httpReqMessage)
+	_, err := writer.WriteString(httpReqMessage)
+
 	if err != nil {
-		fmt.Println("Write error:", err)
-		return
+		log.Fatalln("Write error:", err)
 	}
 
 	if err := writer.Flush(); err != nil {
-		fmt.Println("Flush error:", err)
-		return
+		log.Fatalln("Flush error:", err)
 	}
+
+}
+
+func processHTTPResponse(args ArgInfo, reader *bufio.Reader) {
 
 	var resHeaders []string
 	var body []string
 
 	var isHeaderSection bool = true
+	var contentLength int = 100000
 
 	for {
 
@@ -157,9 +162,11 @@ func main() {
 		if err == io.EOF {
 			break
 		}
+		if err != nil {
+			fmt.Println("Read error:", err)
+			return
+		}
 	}
-
-	fmt.Printf("Headers:\n")
 
 	for _, hdr := range resHeaders {
 		fmt.Printf("%s", hdr)
@@ -170,5 +177,23 @@ func main() {
 	for _, bline := range body {
 		fmt.Printf("%s", bline)
 	}
+}
+
+func main() {
+
+	// CMD argument flags
+	var args = parseArgs()
+
+	// Start TCP connection with the origin host
+	conn, writer, reader := stablishTCPConnection(args)
+
+	// Close connection at the end of main function
+	defer conn.Close()
+
+	// Send HTTP 1.1 request with the required parameters
+	sendHTTPRequest(args, writer)
+
+	// Process the HTTP 1.1 response
+	processHTTPResponse(args, reader)
 
 }
