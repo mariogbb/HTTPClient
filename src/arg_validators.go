@@ -3,10 +3,8 @@ package src
 import (
 	"fmt"
 	"net"
-	"net/url"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -28,16 +26,8 @@ func ValidateHTTPMethod(method string) (HTTPMethod, error) {
 // Validates an HTTP/HTTPS URI or an authority with an optional path and query.
 // By default schema is set as HTTP
 func ValidateHTTPHostAndPort(input string) (string, string, int, bool, error) {
-
 	invalid := func() (string, string, int, bool, error) {
 		return "", "", 0, false, fmt.Errorf("invalid HTTP URI %q", input)
-	}
-
-	// URI characters and percent escapes
-	uriPattern := regexp.MustCompile(`^(?i:(?:https?://)?)(?:\[[0-9A-Fa-f:.]+\]|(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f]{2})+)(?::[0-9]+)?(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*)?(?:\?(?:[A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?(?:#(?:[A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?$`)
-
-	if !uriPattern.MatchString(input) {
-		return invalid()
 	}
 
 	lower := strings.ToLower(input)
@@ -46,37 +36,37 @@ func ValidateHTTPHostAndPort(input string) (string, string, int, bool, error) {
 		input = "http://" + input
 	}
 
-	// @TODO: Implement a custom validator for URL. For now it works as a way
-	// to extract URL data
-	u, err := url.Parse(input)
-
-	if err != nil || u.Hostname() == "" {
+	u, err := ParseRFC3986URI(input)
+	if err != nil || u.host == "" || strings.Contains(u.authority, "@") || strings.HasSuffix(u.authority, ":") {
 		return invalid()
 	}
 
-	if strings.HasPrefix(u.Host, "[") && net.ParseIP(u.Hostname()) == nil {
-		return invalid()
+	host := u.host
+	if strings.HasPrefix(host, "[") {
+		host = host[1 : len(host)-1]
+		if net.ParseIP(host) == nil {
+			return invalid()
+		}
 	}
 
 	isPortUserProvided := false
-	scheme := strings.ToLower(u.Scheme)
+	scheme := strings.ToLower(u.scheme)
 	port := 80
 
 	if scheme == "https" {
 		port = 443
 	}
 
-	if u.Port() != "" {
-		port, err = strconv.Atoi(u.Port())
-
-		if err != nil || port < 1 || port > 65535 {
+	if u.port != -1 {
+		port = u.port
+		if port < 1 || port > 65535 {
 			return invalid()
 		}
 
 		isPortUserProvided = true
 	}
 
-	return scheme, u.Hostname(), port, isPortUserProvided, nil
+	return scheme, host, port, isPortUserProvided, nil
 }
 
 /* Validates HTTP request headers provided by the user input. Headers must follow

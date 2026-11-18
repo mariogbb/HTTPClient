@@ -143,7 +143,7 @@ func processHTTPResponse(args ArgInfo, reader *bufio.Reader) {
 	var body []string
 
 	var isHeaderSection bool = true
-	var contentLength int = 100000
+	// var contentLength int = 100000
 
 	for {
 
